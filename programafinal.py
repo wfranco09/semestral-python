@@ -4,26 +4,37 @@ import threading
 from vpython import *
 import time
 
+# Pide el nombre antes de conectar
+player_name = input("Tu nombre (ej. Winston Franco): ").strip() or "Jugador"
+
 # =============== CONFIGURACIÓN DE RED =================
-IP_SERVIDOR = "172.29.34.2"   # cambia a la IP del servidor si hace falta
+IP_SERVIDOR = "192.168.1.4"   # pon aquí la IP del servidor
 PUERTO = 5000
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((IP_SERVIDOR, PUERTO))
 print("Conectado al servidor.")
 
+# Enviamos nuestro nombre al servidor
+try:
+    client.send(f"NAME:{player_name}".encode())
+except:
+    pass
+
 # ========== LÓGICA DEL JUEGO (mantener mismo esquema de índices) ==========
 jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-celdas = {}    # index -> objeto 3D
-marcadores = {}  # index -> lista de objetos dibujados (para limpiar si reinicias)
-botones_ui = {}  # contenedor para controles vpython
-botones_3d = []
-jugador = 0     # 0 = jugador1 (X), 1 = jugador2 (O)
+celdas = {}         # index -> objeto 3D (box)
+marcadores = {}     # index -> lista de objetos dibujados (X/O)
+selected_index = 0  # celda seleccionada (para moverse con teclado)
+local_player_id = None  # 0 o 1 (recibido del servidor)
+turno = 0           # 0 empieza por defecto; servidor no fuerza, cliente sí
+jugador = 0         # usado para dibujar (sincronizado con turno local)
 g = 0
 contador_ganadas_jugador1 = 0
 contador_ganadas_jugador2 = 0
 
-# Utilidades para index <-> XYZ
+opponent_name = "Esperando..."
+# Utilidades index <-> XYZ
 def index_to_xyz(i):
     Z = int(i / 16)
     y = i % 16
@@ -40,83 +51,151 @@ scene.title = "Tic Tac Toe 3D - VPython"
 scene.width = 1000
 scene.height = 700
 
-# Panel de texto simple
-label_score = wtext(text=f"<b>Jugador1 (X): {contador_ganadas_jugador1}</b>    <b>Jugador2 (O): {contador_ganadas_jugador2}</b>\n")
+# HUD: score, turno, nombres
+label_score = wtext(text=f"<b>{player_name} (X): {contador_ganadas_jugador1}</b>    <b>{opponent_name} (O): {contador_ganadas_jugador2}</b>\n")
 wtext(text="   ")
-label_turn = wtext(text=f"Turno: Jugador {jugador+1}\n")
+label_turn = wtext(text=f"Turno: {'?' if local_player_id is None else ('Jugador ' + str(turno+1))}\n")
+wtext(text="\n")
+label_info = wtext(text=f"Tú: {player_name}    Oponente: {opponent_name}\n")
 wtext(text="\n")
 
-# Crear cubos 4x4x4; los mantenemos con index igual al de tu cliente tkinter
+# Crear cubos 4x4x4
 index = 0
 spacing = 2.4
-offset = vector(-spacing*1.5, -spacing*1.5, -spacing*1.5)  # centrar
+offset = vector(-spacing*1.5, -spacing*1.5, -spacing*1.5)
 for Z in range(4):
     for Y in range(4):
         for X in range(4):
             pos = vector(X*spacing, Y*spacing, Z*spacing) + offset
-            cubo = box(pos=pos, size=vector(1.6,1.6,1.6), opacity=0.07, color=color.gray(0.5))
+            cubo = box(pos=pos, size=vector(1.6,1.6,1.6), opacity=0.18, color=color.gray(0.6))
             cubo.index = index
             celdas[index] = cubo
             marcadores[index] = []
             index += 1
 
-# Dibujar X u O en la celda dada (coordenadas en espacio 3D derivadas de pos del cubo)
+# resaltado seleccionado
+prev_selected = None
+def highlight_cell(i):
+    global prev_selected
+    if prev_selected is not None and prev_selected in celdas:
+        # restaurar
+        celdas[prev_selected].color = color.gray(0.6)
+        celdas[prev_selected].opacity = 0.18
+    prev_selected = i
+    if i in celdas:
+        celdas[i].color = color.yellow
+        celdas[i].opacity = 0.35
+
+# Dibujar X (rojo) y O (azul)
 def dibujar_x(index):
     cubo = celdas[index]
     p = cubo.pos
-    # dos barras cruzadas
-    b1 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(1,1,0), up=vector(0,0,1), color=color.blue)
-    b2 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(-1,1,0), up=vector(0,0,1), color=color.blue)
+    b1 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(1,1,0), up=vector(0,0,1), color=color.red)
+    b2 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(-1,1,0), up=vector(0,0,1), color=color.red)
     marcadores[index].extend([b1,b2])
 
 def dibujar_o(index):
     cubo = celdas[index]
     p = cubo.pos
-    # ring (anillo)
-    r = ring(pos=p, axis=vector(0,0,1), radius=0.9, thickness=0.25, up=vector(0,1,0), color=color.red)
+    r = ring(pos=p, axis=vector(0,0,1), radius=0.9, thickness=0.25, up=vector(0,1,0), color=color.blue)
     marcadores[index].append(r)
 
-# Lógica cuando se hace una jugada (local o remota). enviar controla si manda al servidor.
+# actualiza HUD textos
+def actualizar_labels():
+    label_score.text = f"<b>{player_name} (X): {contador_ganadas_jugador1}</b>    <b>{opponent_name} (O): {contador_ganadas_jugador2}</b>\n"
+    # Mostrar quien es turno, o "Tu turno" si coincide
+    turno_text = f"Turno: Jugador {turno+1}"
+    if local_player_id is not None:
+        if turno == local_player_id:
+            turno_text += " (Tu turno)"
+        else:
+            turno_text += " (Turno oponente)"
+    label_turn.text = turno_text + "\n"
+    label_info.text = f"Tú: {player_name}    Oponente: {opponent_name}\n"
+
+# Lógica de jugada local/remota con control de turno
 def poner_jugada(i, enviar=True):
-    global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2
-    X, Y, Z = index_to_xyz(i)
+    global turno, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+    if local_player_id is None:
+        print("Aún no sabes tu id de jugador (esperando START).")
+        return
     if g:
         return
+    # solo permitir jugar si es tu turno
+    if turno != local_player_id:
+        print("No es tu turno.")
+        return
+
+    X, Y, Z = index_to_xyz(i)
     if not jugadas[Z][Y][X]:
-        if jugador == 0:
+        # si local_player_id == 0 -> X, else O
+        if local_player_id == 0:
             jugadas[Z][Y][X] = -1
             dibujar_x(i)
         else:
             jugadas[Z][Y][X] = 1
             dibujar_o(i)
 
+        # enviar jugada
         if enviar:
             try:
                 client.send(str(i).encode())
             except Exception as e:
                 print("Error enviando jugada:", e)
 
+        # comprobar victoria
         if verificar_todo(X, Y, Z):
-            # ganar
             g = 1
-            if jugador == 0:
+            if local_player_id == 0:
                 contador_ganadas_jugador1 += 1
             else:
                 contador_ganadas_jugador2 += 1
-            actualizar_puntaje()
-            label_turn.text = f"¡Jugador {jugador+1} GANÓ!\n"
+            actualizar_labels()
+            ganador_nombre = player_name if local_player_id == jugador else opponent_name
+            # mostrar mensaje con nombre ganador (local en este caso)
+            label_turn.text = f"¡{player_name} (Jugador {local_player_id+1}) GANÓ!\n"
             return
 
-        jugador = not jugador
-        label_turn.text = f"Turno: Jugador {jugador+1}\n"
+        # pasar turno al otro
+        turno = 1 - turno
+        actualizar_labels()
     else:
         print("Jugada inválida")
 
 def aplicar_jugada_remota(i):
+    global turno, g, contador_ganadas_jugador1, contador_ganadas_jugador2
     # cuando recibimos del server, aplicamos sin reenviar
-    poner_jugada(i, enviar=False)
+    X, Y, Z = index_to_xyz(i)
+    if jugadas[Z][Y][X]:
+        # ya ocupada (posible condición de carrera) -> ignorar
+        return
 
-# Las mismas funciones de verificación que ya tienes
+    # marcar la jugada como la del otro
+    if local_player_id == 0:
+        # si yo soy 0, el otro es 1 -> el otro pone O (1)
+        jugadas[Z][Y][X] = 1
+        dibujar_o(i)
+    else:
+        jugadas[Z][Y][X] = -1
+        dibujar_x(i)
+
+    # comprobar victoria (del otro)
+    if verificar_todo(X, Y, Z):
+        g = 1
+        if local_player_id == 0:
+            contador_ganadas_jugador2 += 1
+        else:
+            contador_ganadas_jugador1 += 1
+        actualizar_labels()
+        # mostrar nombre del ganador (el otro)
+        label_turn.text = f"¡{opponent_name} (Jugador {1-local_player_id+1}) GANÓ!\n"
+        return
+
+    # pasar turno
+    turno = 1 - turno
+    actualizar_labels()
+
+# Verificaciones (misma lógica que tenías)
 def verificar_todo(X, Y, Z):
     return (
         horizontal(Y, Z) or
@@ -163,14 +242,9 @@ def diagonal_cruzada():
         abs(sum(jugadas[i][3-i][3-i] for i in range(4))) == 4
     )
 
-def actualizar_puntaje():
-    # actualizar texto simple
-    label_score.text = f"<b>Jugador1 (X): {contador_ganadas_jugador1}</b>    <b>Jugador2 (O): {contador_ganadas_jugador2}</b>\n"
-
 def reiniciar_tablero(ev=None):
-    global jugadas, marcadores, g, jugador
+    global jugadas, marcadores, g, turno
     jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-    # borrar marcadores 3D
     for idx, objs in marcadores.items():
         for o in objs:
             try:
@@ -180,44 +254,101 @@ def reiniciar_tablero(ev=None):
                 pass
         marcadores[idx] = []
     g = 0
-    jugador = 0
-    label_turn.text = f"Turno: Jugador {jugador+1}\n"
+    turno = 0
+    actualizar_labels()
+    highlight_cell(selected_index)
 
-# Bind click event
+# Manejo de clicks con mouse (opcional)
 def on_click(evt):
-    evt.pick  # objeto seleccionado por click (puede ser None)
     obj = evt.pick
     if obj and hasattr(obj, "index"):
         i = obj.index
-        poner_jugada(i, enviar=True)
+        # mover selección virtual allí
+        global selected_index
+        selected_index = i
+        highlight_cell(selected_index)
 
 scene.bind("click", on_click)
 
-# UI: botón reiniciar (vpython)
+# Manejo de teclado para moverte y colocar fichas
+def keydown(evt):
+    global selected_index
+    key = evt.key.lower()
+    X, Y, Z = index_to_xyz(selected_index)
+
+    if key in ('left',):
+        X = max(0, X-1)
+    elif key in ('right',):
+        X = min(3, X+1)
+    elif key in ('up',):
+        Y = min(3, Y+1)
+    elif key in ('down',):
+        Y = max(0, Y-1)
+    elif key == 'w':  # subir capa Z
+        Z = min(3, Z+1)
+    elif key == 's':  # bajar capa Z
+        Z = max(0, Z-1)
+    elif key in ('enter', ' '):  # colocar ficha
+        i = xyz_to_index(X, Y, Z)
+        poner_jugada(i, enviar=True)
+        return
+    selected_index = xyz_to_index(X, Y, Z)
+    highlight_cell(selected_index)
+
+scene.bind('keydown', keydown)
+
+# Botón reiniciar
 button(bind=reiniciar_tablero, text="Reiniciar tablero")
+highlight_cell(selected_index)
+actualizar_labels()
 
 # ========== HILO DE RECEPCIÓN ==========
 def recibir_jugadas():
+    global local_player_id, opponent_name, turno
     while True:
         try:
-            data = client.recv(1024).decode()
+            data = client.recv(1024)
             if not data:
                 break
-            # si llega algo que no sea un número, ignorar
+            text = data.decode(errors='ignore')
+
+            # START:id => mi id de jugador
+            if text.startswith("START:"):
+                try:
+                    local_player_id = int(text.split(":",1)[1])
+                    print("Tu player_id:", local_player_id)
+                    # el que recibe START puede saber si empieza (0 empieza)
+                    turno = 0  # por defecto
+                    actualizar_labels()
+                except:
+                    pass
+                continue
+
+            # NAME:... => nombre del oponente (uno o varios mensajes posibles)
+            if text.startswith("NAME:"):
+                name = text.split(":",1)[1]
+                # si el nombre no es el tuyo, guardarlo como oponente (simple heurística)
+                if name != player_name:
+                    opponent_name = name
+                    actualizar_labels()
+                continue
+
+            # si es número => jugada
             try:
-                i = int(data)
+                i = int(text)
                 print("Oponente jugó:", i)
                 aplicar_jugada_remota(i)
             except:
-                print("Mensaje no-numérico recibido:", data)
+                print("Recibido (ignorado):", text)
+
         except Exception as e:
             print("Error recibiendo:", e)
             break
 
 threading.Thread(target=recibir_jugadas, daemon=True).start()
 
-# VPython tiene su propio loop de render; para que el script no acabe:
+# Loop principal de VPython (para mantener la app viva)
 while True:
     rate(30)
-    # loop vacío - todo se maneja por eventos
+    # aquí se maneja todo por eventos y hilos
     pass
