@@ -74,13 +74,14 @@ for Z in range(4):
 prev_selected = None
 def highlight_cell(i):
     global prev_selected
-    if prev_selected is not None:
+    if prev_selected is not None and prev_selected in celdas:
         celdas[prev_selected].color = color.gray(0.6)
         celdas[prev_selected].opacity = 0.18
 
     prev_selected = i
-    celdas[i].color = color.yellow
-    celdas[i].opacity = 0.35
+    if i in celdas:
+        celdas[i].color = color.yellow
+        celdas[i].opacity = 0.35
 
 def dibujar_x(index):
     cubo = celdas[index]
@@ -132,7 +133,10 @@ def poner_jugada(i, enviar=True):
         dibujar_o(i)
 
     if enviar:
-        client.send(str(i).encode())
+        try:
+            client.send(str(i).encode())
+        except Exception as e:
+            print("Error enviando:", e)
 
     if verificar_todo(X,Y,Z):
         g = 1
@@ -223,11 +227,33 @@ def diagonal_cruzada():
 #                          EVENTOS
 # =====================================================================
 def on_click(evt):
-    obj = evt.pick
-    if obj and hasattr(obj, "index"):
+    """
+    FIX: VPython on some versions (and on Python 3.14) may send events
+    without a 'pick' attribute or with pick == None.
+    We safely handle both cases and map the picked object to our celdas.
+    """
+    # guard: evt might not have pick, or pick can be None
+    picked_obj = getattr(evt, "pick", None)
+    if picked_obj is None:
+        return
+
+    # if the picked object already has an index attribute, use it
+    if hasattr(picked_obj, "index"):
+        idx = picked_obj.index
         global selected_index
-        selected_index = obj.index
+        selected_index = idx
         highlight_cell(selected_index)
+        return
+
+    # otherwise find which celda matches the picked object
+    for idx, celda in celdas.items():
+        if picked_obj is celda:
+            selected_index = idx
+            highlight_cell(selected_index)
+            return
+
+    # clicked on something else -> ignore
+    return
 
 scene.bind("click", on_click)
 
@@ -241,7 +267,7 @@ def keydown(evt):
     elif key == "up": Y = min(3, Y+1)
     elif key == "down": Y = max(0, Y-1)
     elif key == "w": Z = min(3, Z+1)
-    elif key == "s": Z = max(0, Z-1)
+    elif key == "s": Z = max(3, Z-1)
     elif key in ("enter", " "):
         i = xyz_to_index(X,Y,Z)
         poner_jugada(i)
@@ -255,12 +281,16 @@ scene.bind("keydown", keydown)
 def reiniciar(ev=None):
     global jugadas, marcadores, g, turno
     jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-    for idx in marcadores:
+    for idx in list(marcadores.keys()):
         for m in marcadores[idx]:
-            m.visible = False
+            try:
+                m.visible = False
+            except:
+                pass
         marcadores[idx] = []
     g = 0
     turno = 0
+    highlight_cell(0)
     actualizar_labels()
 
 button(bind=reiniciar, text="Reiniciar tablero")
@@ -280,12 +310,15 @@ def recibir():
             if not data:
                 break
 
-            text = data.decode()
+            text = data.decode(errors='ignore')
 
             if text.startswith("START:"):
-                local_player_id = int(text.split(":")[1])
-                turno = 0
-                actualizar_labels()
+                try:
+                    local_player_id = int(text.split(":")[1])
+                    turno = 0
+                    actualizar_labels()
+                except:
+                    pass
                 continue
 
             if text.startswith("NAME:"):
@@ -295,14 +328,22 @@ def recibir():
                     actualizar_labels()
                 continue
 
-            # jugada remota
+            # jugada remota (puede venir como "MOVE:NN" o solo "NN")
+            # manejamos posible prefijo
+            if text.startswith("MOVE:"):
+                payload = text.split(":",1)[1]
+            else:
+                payload = text
+
             try:
-                i = int(text)
+                i = int(payload.strip())
                 aplicar_jugada_remota(i)
             except:
                 pass
 
-        except:
+        except Exception as e:
+            # evita que el hilo muera en silencio; imprime el error para debug
+            print("Error hilo recibir:", e)
             break
 
 threading.Thread(target=recibir, daemon=True).start()
@@ -316,4 +357,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    client.close()
+    try:
+        client.close()
+    except:
+        pass
