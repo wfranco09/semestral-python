@@ -1,90 +1,122 @@
+# cliente_vpython.py
 import socket
 import threading
-from tkinter import *
-import tkinter as tk
+from vpython import *
+import time
 
 # =============== CONFIGURACIÓN DE RED =================
-IP_SERVIDOR = "172.29.34.2"
+IP_SERVIDOR = "172.29.34.2"   # cambia a la IP del servidor si hace falta
 PUERTO = 5000
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((IP_SERVIDOR, PUERTO))
 print("Conectado al servidor.")
 
-# ======================================================
+# ========== LÓGICA DEL JUEGO (mantener mismo esquema de índices) ==========
+jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
+celdas = {}    # index -> objeto 3D
+marcadores = {}  # index -> lista de objetos dibujados (para limpiar si reinicias)
+botones_ui = {}  # contenedor para controles vpython
+botones_3d = []
+jugador = 0     # 0 = jugador1 (X), 1 = jugador2 (O)
+g = 0
+contador_ganadas_jugador1 = 0
+contador_ganadas_jugador2 = 0
 
-
-def recibir_jugadas():
-    while True:
-        try:
-            data = client.recv(1024).decode()
-            if data:
-                i = int(data)
-                print("Oponente jugó:", i)
-                aplicar_jugada_remota(i)
-        except:
-            break
-
-
-threading.Thread(target=recibir_jugadas, daemon=True).start()
-
-
-
-# ========== TU JUEGO COMPLETO =============
-def crearBoton(valor, i):
-    return Button(tablero, text=valor, width=5, height=1, font=("Helvetica", 15),
-                  command=lambda: botonClick(i, enviar=True))
-
-
-def botonClick(i, enviar=True):
-    global jugador, jugadas, X, Y, Z, g
-
+# Utilidades para index <-> XYZ
+def index_to_xyz(i):
     Z = int(i / 16)
     y = i % 16
     Y = int(y / 4)
     X = y % 4
+    return X, Y, Z
 
+def xyz_to_index(X, Y, Z):
+    return Z*16 + Y*4 + X
+
+# ========== VISIBLE 3D (VPython) ==========
+scene.background = color.white
+scene.title = "Tic Tac Toe 3D - VPython"
+scene.width = 1000
+scene.height = 700
+
+# Panel de texto simple
+label_score = wtext(text=f"<b>Jugador1 (X): {contador_ganadas_jugador1}</b>    <b>Jugador2 (O): {contador_ganadas_jugador2}</b>\n")
+wtext(text="   ")
+label_turn = wtext(text=f"Turno: Jugador {jugador+1}\n")
+wtext(text="\n")
+
+# Crear cubos 4x4x4; los mantenemos con index igual al de tu cliente tkinter
+index = 0
+spacing = 2.4
+offset = vector(-spacing*1.5, -spacing*1.5, -spacing*1.5)  # centrar
+for Z in range(4):
+    for Y in range(4):
+        for X in range(4):
+            pos = vector(X*spacing, Y*spacing, Z*spacing) + offset
+            cubo = box(pos=pos, size=vector(1.6,1.6,1.6), opacity=0.07, color=color.gray(0.5))
+            cubo.index = index
+            celdas[index] = cubo
+            marcadores[index] = []
+            index += 1
+
+# Dibujar X u O en la celda dada (coordenadas en espacio 3D derivadas de pos del cubo)
+def dibujar_x(index):
+    cubo = celdas[index]
+    p = cubo.pos
+    # dos barras cruzadas
+    b1 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(1,1,0), up=vector(0,0,1), color=color.blue)
+    b2 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(-1,1,0), up=vector(0,0,1), color=color.blue)
+    marcadores[index].extend([b1,b2])
+
+def dibujar_o(index):
+    cubo = celdas[index]
+    p = cubo.pos
+    # ring (anillo)
+    r = ring(pos=p, axis=vector(0,0,1), radius=0.9, thickness=0.25, up=vector(0,1,0), color=color.red)
+    marcadores[index].append(r)
+
+# Lógica cuando se hace una jugada (local o remota). enviar controla si manda al servidor.
+def poner_jugada(i, enviar=True):
+    global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+    X, Y, Z = index_to_xyz(i)
     if g:
         return
-
     if not jugadas[Z][Y][X]:
         if jugador == 0:
             jugadas[Z][Y][X] = -1
-            botones[i].config(text="X", font='arial_black 15', fg='blue')
+            dibujar_x(i)
         else:
             jugadas[Z][Y][X] = 1
-            botones[i].config(text="O", font='arial_black 15', fg='red')
+            dibujar_o(i)
 
-        # Enviar al servidor SOLO si es jugada local
         if enviar:
-            client.send(str(i).encode())
+            try:
+                client.send(str(i).encode())
+            except Exception as e:
+                print("Error enviando jugada:", e)
 
         if verificar_todo(X, Y, Z):
-            ganador()
+            # ganar
+            g = 1
+            if jugador == 0:
+                contador_ganadas_jugador1 += 1
+            else:
+                contador_ganadas_jugador2 += 1
+            actualizar_puntaje()
+            label_turn.text = f"¡Jugador {jugador+1} GANÓ!\n"
             return
 
         jugador = not jugador
-        texto_actual.config(text='Jugador ' + str(jugador + 1))
+        label_turn.text = f"Turno: Jugador {jugador+1}\n"
     else:
-        aviso = Label(tablero, text='Jugada inválida', font='arial, 20', fg='green')
-        aviso.place(x=50, y=30)
-
+        print("Jugada inválida")
 
 def aplicar_jugada_remota(i):
-    """Actualiza el tablero sin enviar jugada al servidor."""
-    global jugador
-    botonClick(i, enviar=False)
+    # cuando recibimos del server, aplicamos sin reenviar
+    poner_jugada(i, enviar=False)
 
-
-def ganador():
-    global jugador, g
-    texto_ganador = Label(tablero, text=f'Jugador {jugador + 1} GANÓ', font='arial, 20', fg='green')
-    texto_ganador.place(x=50, y=30)
-    g = 1
-    contar_ganadas()
-    actualizar_puntaje()
-
-
+# Las mismas funciones de verificación que ya tienes
 def verificar_todo(X, Y, Z):
     return (
         horizontal(Y, Z) or
@@ -131,72 +163,61 @@ def diagonal_cruzada():
         abs(sum(jugadas[i][3-i][3-i] for i in range(4))) == 4
     )
 
-
-def tableronuevo():
-    global jugadas, botones, X, Y, Z, g, jugador
-    jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-    X = Y = Z = 0
-    g = jugador = 0
-    for b in range(64):
-        botones[b].config(text=' ')
-    texto_actual.config(text='Jugador 1')
-
-
-def contar_ganadas():
-    global contador_ganadas_jugador1, contador_ganadas_jugador2, jugador
-    if jugador == 0:
-        contador_ganadas_jugador1 += 1
-    else:
-        contador_ganadas_jugador2 += 1
-
 def actualizar_puntaje():
-    puntaje_jugador1.config(text=f'Jugador 1: {contador_ganadas_jugador1}')
-    puntaje_jugador2.config(text=f'Jugador 2: {contador_ganadas_jugador2}')
+    # actualizar texto simple
+    label_score.text = f"<b>Jugador1 (X): {contador_ganadas_jugador1}</b>    <b>Jugador2 (O): {contador_ganadas_jugador2}</b>\n"
 
+def reiniciar_tablero(ev=None):
+    global jugadas, marcadores, g, jugador
+    jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
+    # borrar marcadores 3D
+    for idx, objs in marcadores.items():
+        for o in objs:
+            try:
+                o.visible = False
+                del o
+            except:
+                pass
+        marcadores[idx] = []
+    g = 0
+    jugador = 0
+    label_turn.text = f"Turno: Jugador {jugador+1}\n"
 
-# ========== INTERFAZ TKINTER ==========
+# Bind click event
+def on_click(evt):
+    evt.pick  # objeto seleccionado por click (puede ser None)
+    obj = evt.pick
+    if obj and hasattr(obj, "index"):
+        i = obj.index
+        poner_jugada(i, enviar=True)
 
-jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-botones = []
-X = Y = Z = 0
-g = jugador = 0
+scene.bind("click", on_click)
 
-tablero = Tk()
-tablero.title('Tic Tac Toe 3D ONLINE')
-tablero.geometry("1040x720+100+50")
-tablero.resizable(0, 0)
-tablero.config(bg='lightgray')
+# UI: botón reiniciar (vpython)
+button(bind=reiniciar_tablero, text="Reiniciar tablero")
 
-contador_ganadas_jugador1 = 0
-contador_ganadas_jugador2 = 0
+# ========== HILO DE RECEPCIÓN ==========
+def recibir_jugadas():
+    while True:
+        try:
+            data = client.recv(1024).decode()
+            if not data:
+                break
+            # si llega algo que no sea un número, ignorar
+            try:
+                i = int(data)
+                print("Oponente jugó:", i)
+                aplicar_jugada_remota(i)
+            except:
+                print("Mensaje no-numérico recibido:", data)
+        except Exception as e:
+            print("Error recibiendo:", e)
+            break
 
-puntaje_jugador1 = Label(tablero, text='Jugador 1: 0', font=('arial', 20), fg='blue')
-puntaje_jugador1.place(x=50, y=100)
+threading.Thread(target=recibir_jugadas, daemon=True).start()
 
-puntaje_jugador2 = Label(tablero, text='Jugador 2: 0', font=('arial', 20), fg='red')
-puntaje_jugador2.place(x=50, y=150)
-
-Button(tablero, text="Salir", command=tablero.destroy, bg='red',
-       fg='white', font=('arial', 12, 'bold')).place(x=900, y=650)
-
-titulo = Label(tablero, text='Tic Tac Toe 3D Online', font=('arial', 30, 'bold'),
-               fg='black', bg='lightgray')
-titulo.place(x=350, y=10)
-
-Button(tablero, text="Reiniciar", command=tableronuevo, bg='blue',
-       fg='white', font=('arial', 12, 'bold')).place(x=800, y=650)
-
-for b in range(64):
-    botones.append(crearBoton(' ', b))
-
-contador = 0
-for z in range(3, -1, -1):
-    for y in range(4):
-        for x in range(4):
-            botones[contador].grid(row=y + z * 4, column=x + (3 - z) * 4)
-            contador += 1
-
-texto_actual = Label(tablero, text='Jugador 1', font=('arial', 20), fg='green')
-texto_actual.place(x=500, y=620)
-
-tablero.mainloop()
+# VPython tiene su propio loop de render; para que el script no acabe:
+while True:
+    rate(30)
+    # loop vacío - todo se maneja por eventos
+    pass
