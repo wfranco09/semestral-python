@@ -2,105 +2,78 @@
 import socket
 import threading
 
-clientes = []          # lista de sockets
-client_info = {}       # socket -> {"id":int, "name":str}
-lock = threading.Lock()
+IP_SERVIDOR = "0.0.0.0"   # escucha en todas las interfaces
+PUERTO = 5000
 
-def broadcast(msg_bytes, exclude_conn=None):
-    with lock:
-        for c in clientes.copy():
-            if c is exclude_conn:
-                continue
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind((IP_SERVIDOR, PUERTO))
+server.listen(2)
+
+print(f"Servidor iniciado en {IP_SERVIDOR}:{PUERTO}")
+print("Esperando jugadores...\n")
+
+clientes = []
+nombres = ["Jugador1", "Jugador2"]
+
+
+def manejar_cliente(conn, idx):
+    global clientes
+
+    try:
+        # Mandar START y asignar rol
+        conn.send(f"START:{idx}".encode())
+
+        # Mandar nombre del otro cuando llegue
+        if len(clientes) == 2:
+            # Enviar nombre al otro
             try:
-                c.send(msg_bytes)
+                clientes[0].send(f"NAME:{nombres[1]}".encode())
+                clientes[1].send(f"NAME:{nombres[0]}".encode())
             except:
-                try:
-                    clientes.remove(c)
-                    del client_info[c]
-                    c.close()
-                except:
-                    pass
+                pass
 
-def manejar_cliente(conn, addr):
-    with lock:
-        clientes.append(conn)
-        assigned_id = len(clientes) - 1
-        client_info[conn] = {"id": assigned_id, "name": None}
-
-    print(f"Jugador conectado: {addr} (assigned id {assigned_id})")
-
-    # informar al cliente su id de jugador
-    try:
-        conn.send(f"START:{assigned_id}".encode())
-    except:
-        pass
-
-    try:
         while True:
             data = conn.recv(1024)
             if not data:
                 break
-            msg = data.decode(errors='ignore')
 
-            # Si es un nombre, guardarlo y notificar al resto
-            if msg.startswith("NAME:"):
-                name = msg.split(":", 1)[1]
-                with lock:
-                    client_info[conn]["name"] = name
-                # mandar al resto que este cliente se llama name
-                broadcast(f"NAME:{name}".encode(), exclude_conn=conn)
-                # opcional: enviar al cliente los nombres ya conocidos de otros
-                with lock:
-                    for c, info in client_info.items():
-                        if c != conn and info["name"]:
-                            try:
-                                conn.send(f"NAME:{info['name']}".encode())
-                            except:
-                                pass
-                continue
-
-            # Reenvío de jugadas (números)
-            # Validamos si es número
-            try:
-                int(msg)
-                # reenviar solo la jugada a los demás
-                broadcast(data, exclude_conn=conn)
-            except:
-                # si no es número ni NAME ni START, ignoramos
-                pass
+            # reenviar la jugada o mensaje al otro jugador
+            for i, c in enumerate(clientes):
+                if i != idx:
+                    try:
+                        c.send(data)
+                    except:
+                        pass
 
     except Exception as e:
-        print("Error manejando cliente:", e)
+        print("Error:", e)
 
-    print("Jugador desconectado:", addr)
-    with lock:
+    finally:
+        print(f"Jugador {idx+1} desconectado.")
         try:
-            clientes.remove(conn)
-            del client_info[conn]
+            conn.close()
         except:
             pass
+
+
+# ======================
+# ACEPTAR JUGADORES
+# ======================
+while len(clientes) < 2:
+    conn, addr = server.accept()
+    print(f"Jugador conectado desde {addr}")
+
+    clientes.append(conn)
+
+    # Recibir nombre NAME:<nombre>
     try:
-        conn.close()
+        raw = conn.recv(1024).decode()
+        if raw.startswith("NAME:"):
+            nombres[len(clientes)-1] = raw.split(":", 1)[1]
+            print(f"Nombre del jugador {len(clientes)}: {nombres[len(clientes)-1]}")
     except:
         pass
 
-def main():
-    HOST = "0.0.0.0"
-    PORT = 5000
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen(4)
-    print(f"SERVIDOR LISTO — Esperando jugadores en {HOST}:{PORT} ...")
+    threading.Thread(target=manejar_cliente, args=(conn, len(clientes)-1), daemon=True).start()
 
-    try:
-        while True:
-            conn, addr = server.accept()
-            threading.Thread(target=manejar_cliente, args=(conn, addr), daemon=True).start()
-    except KeyboardInterrupt:
-        print("Servidor detenido por teclado.")
-    finally:
-        server.close()
-
-if __name__ == "__main__":
-    main()
+print("\n¡Los 2 jugadores están conectados!\nServidor listo para partida.")
