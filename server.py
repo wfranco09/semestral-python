@@ -2,78 +2,64 @@
 import socket
 import threading
 
-IP_SERVIDOR = "0.0.0.0"   # escucha en todas las interfaces
-PUERTO = 5000
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((IP_SERVIDOR, PUERTO))
-server.listen(2)
-
-print(f"Servidor iniciado en {IP_SERVIDOR}:{PUERTO}")
-print("Esperando jugadores...\n")
-
 clientes = []
-nombres = ["Jugador1", "Jugador2"]
+clientes_lock = threading.Lock()
 
-
-def manejar_cliente(conn, idx):
-    global clientes
+def manejar_cliente(conn, addr):
+    print(f"Jugador conectado: {addr}")
+    with clientes_lock:
+        clientes.append(conn)
 
     try:
-        # Mandar START y asignar rol
-        conn.send(f"START:{idx}".encode())
-
-        # Mandar nombre del otro cuando llegue
-        if len(clientes) == 2:
-            # Enviar nombre al otro
-            try:
-                clientes[0].send(f"NAME:{nombres[1]}".encode())
-                clientes[1].send(f"NAME:{nombres[0]}".encode())
-            except:
-                pass
-
         while True:
             data = conn.recv(1024)
             if not data:
                 break
-
-            # reenviar la jugada o mensaje al otro jugador
-            for i, c in enumerate(clientes):
-                if i != idx:
-                    try:
-                        c.send(data)
-                    except:
-                        pass
-
+            # reenviar jugada a todos menos al que la envió
+            with clientes_lock:
+                for c in clientes.copy():
+                    if c != conn:
+                        try:
+                            c.sendall(data)
+                        except Exception as e:
+                            print("Error al enviar a un cliente:", e)
+                            try:
+                                clientes.remove(c)
+                                c.close()
+                            except:
+                                pass
     except Exception as e:
-        print("Error:", e)
-
+        print("Excepción en cliente:", e)
     finally:
-        print(f"Jugador {idx+1} desconectado.")
-        try:
-            conn.close()
-        except:
-            pass
+        print("Jugador desconectado:", addr)
+        with clientes_lock:
+            try:
+                clientes.remove(conn)
+            except ValueError:
+                pass
+        conn.close()
 
+def main():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 5000))
+    server.listen(2)
+    print("SERVIDOR LISTO — Esperando jugadores...")
 
-# ======================
-# ACEPTAR JUGADORES
-# ======================
-while len(clientes) < 2:
-    conn, addr = server.accept()
-    print(f"Jugador conectado desde {addr}")
-
-    clientes.append(conn)
-
-    # Recibir nombre NAME:<nombre>
     try:
-        raw = conn.recv(1024).decode()
-        if raw.startswith("NAME:"):
-            nombres[len(clientes)-1] = raw.split(":", 1)[1]
-            print(f"Nombre del jugador {len(clientes)}: {nombres[len(clientes)-1]}")
-    except:
-        pass
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(target=manejar_cliente, args=(conn, addr), daemon=True).start()
+    except KeyboardInterrupt:
+        print("Apagando servidor...")
+    finally:
+        with clientes_lock:
+            for c in clientes:
+                try:
+                    c.close()
+                except:
+                    pass
+        server.close()
 
-    threading.Thread(target=manejar_cliente, args=(conn, len(clientes)-1), daemon=True).start()
-
-print("\n¡Los 2 jugadores están conectados!\nServidor listo para partida.")
+if __name__ == "__main__":
+    main()

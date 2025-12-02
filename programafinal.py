@@ -1,200 +1,143 @@
-# cliente_vpython.py
+# client.py
 import socket
 import threading
-from vpython import *
-import time
-
-# =============== NOMBRE DEL JUGADOR =================
-player_name = input("Tu nombre: ").strip() or "Jugador"
+import tkinter as tk
+from tkinter import Button, Label, Tk
 
 # =============== CONFIGURACIÓN DE RED =================
-IP_SERVIDOR = "192.168.1.4"   # ← CAMBIA ESTO POR LA IP DE TU SERVIDOR
+IP_SERVIDOR = "192.168.1.15"  # cambia si es necesario
 PUERTO = 5000
 
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((IP_SERVIDOR, PUERTO))
-print("Conectado al servidor.")
+try:
+    client.connect((IP_SERVIDOR, PUERTO))
+    print("Conectado al servidor.")
+except Exception as e:
+    print("No se pudo conectar al servidor:", e)
+    raise SystemExit(1)
+# ======================================================
 
-# Enviar nombre
-client.send(f"NAME:{player_name}".encode())
-
-# =====================================================================
-#               LÓGICA Y ESTRUCTURAS DEL JUEGO 3D
-# =====================================================================
+# Variables del juego
 jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-celdas = {}
-marcadores = {}
-selected_index = 0
-local_player_id = None
-turno = 0
-g = 0
+botones = []
+X = Y = Z = 0
+g = 0  # juego finalizado flag (0/1)
+# jugador: 0 o 1 (entero). Empezamos por jugador 0
+jugador = 0
 
 contador_ganadas_jugador1 = 0
 contador_ganadas_jugador2 = 0
-opponent_name = "Esperando..."
 
-def index_to_xyz(i):
+lock_gui = threading.Lock()
+
+def recibir_jugadas():
+    while True:
+        try:
+            data = client.recv(1024)
+            if not data:
+                print("Conexión cerrada por el servidor.")
+                break
+            texto = data.decode()
+            if texto.isdigit():
+                i = int(texto)
+                print("Oponente jugó:", i)
+                # Cuando llega una jugada remota, la debe aplicar como la jugada del otro jugador.
+                aplicar_jugada_remota(i)
+        except Exception as e:
+            print("Error al recibir:", e)
+            break
+
+threading.Thread(target=recibir_jugadas, daemon=True).start()
+
+# ========== Lógica del juego ==========
+def crearBoton(valor, i):
+    return Button(tablero, text=valor, width=5, height=1, font=("Helvetica", 15),
+                  command=lambda: botonClick(i, enviar=True, es_remoto=False))
+
+def botonClick(i, enviar=True, es_remoto=False):
+    global jugador, jugadas, X, Y, Z, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+
     Z = int(i / 16)
     y = i % 16
     Y = int(y / 4)
     X = y % 4
-    return X, Y, Z
 
-def xyz_to_index(X, Y, Z):
-    return Z*16 + Y*4 + X
-
-# =====================================================================
-#                          INTERFAZ 3D
-# =====================================================================
-scene.background = color.white
-scene.title = "Tic Tac Toe 3D - VPython"
-scene.width = 1000
-scene.height = 700
-
-label_score = wtext(text=f"<b>{player_name} (X): 0</b>    <b>{opponent_name} (O): 0</b>\n")
-wtext(text=" ")
-label_turn = wtext(text=f"Turno: ?\n")
-label_info = wtext(text=f"Tú: {player_name}    Oponente: {opponent_name}\n")
-wtext(text="\n")
-
-index = 0
-spacing = 2.4
-offset = vector(-spacing*1.5, -spacing*1.5, -spacing*1.5)
-
-for Z in range(4):
-    for Y in range(4):
-        for X in range(4):
-            pos = vector(X*spacing, Y*spacing, Z*spacing) + offset
-            cubo = box(pos=pos, size=vector(1.6,1.6,1.6), opacity=0.18, color=color.gray(0.6))
-            cubo.index = index
-            celdas[index] = cubo
-            marcadores[index] = []
-            index += 1
-
-prev_selected = None
-def highlight_cell(i):
-    global prev_selected
-    if prev_selected is not None and prev_selected in celdas:
-        celdas[prev_selected].color = color.gray(0.6)
-        celdas[prev_selected].opacity = 0.18
-
-    prev_selected = i
-    if i in celdas:
-        celdas[i].color = color.yellow
-        celdas[i].opacity = 0.35
-
-def dibujar_x(index):
-    cubo = celdas[index]
-    p = cubo.pos
-    b1 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(1,1,0), color=color.red)
-    b2 = box(pos=p, size=vector(1.8,0.25,0.25), axis=vector(-1,1,0), color=color.red)
-    marcadores[index].extend([b1, b2])
-
-def dibujar_o(index):
-    cubo = celdas[index]
-    p = cubo.pos
-    r = ring(pos=p, axis=vector(0,0,1), radius=0.9, thickness=0.25, color=color.blue)
-    marcadores[index].append(r)
-
-def actualizar_labels():
-    label_score.text = f"<b>{player_name} (X): {contador_ganadas_jugador1}</b>    <b>{opponent_name} (O): {contador_ganadas_jugador2}</b>\n"
-    t = f"Turno: Jugador {turno+1}"
-    if local_player_id is not None:
-        if turno == local_player_id:
-            t += " (Tu turno)"
-        else:
-            t += " (Oponente)"
-    label_turn.text = t + "\n"
-    label_info.text = f"Tú: {player_name}    Oponente: {opponent_name}\n"
-
-# =====================================================================
-#                          JUGADAS
-# =====================================================================
-def poner_jugada(i, enviar=True):
-    global turno, g, contador_ganadas_jugador1, contador_ganadas_jugador2
-
-    if local_player_id is None:
-        print("Aún no sabes tu id.")
+    if g:
         return
 
-    if turno != local_player_id:
-        print("No es tu turno.")
-        return
+    if not jugadas[Z][Y][X]:
+        # Dependiendo de qué jugador es, guardamos -1 o 1 (por compatibilidad con verificaciones)
+        marca = -1 if jugador == 0 else 1
+        # Colocamos la marca en la estructura
+        jugadas[Z][Y][X] = marca
 
-    X, Y, Z = index_to_xyz(i)
-    if jugadas[Z][Y][X] != 0:
-        return
+        # Actualizamos el texto del botón
+        texto_marca = "X" if jugador == 0 else "O"
+        botones[i].config(text=texto_marca, font='arial_black 15',
+                          fg='blue' if jugador == 0 else 'red')
 
-    if local_player_id == 0:
-        jugadas[Z][Y][X] = -1
-        dibujar_x(i)
+        # Enviar al servidor SOLO si es jugada local (no reenviamos jugadas remotas)
+        if enviar:
+            try:
+                client.sendall(str(i).encode())
+            except Exception as e:
+                print("Error al enviar jugada:", e)
+
+        # Verificar si esta jugada produce ganador
+        if verificar_todo(X, Y, Z):
+            ganador()
+            return
+
+        # Alternar turno (0 -> 1, 1 -> 0)
+        jugador = 1 - jugador
+        texto_actual.config(text='Jugador ' + str(jugador + 1))
     else:
-        jugadas[Z][Y][X] = 1
-        dibujar_o(i)
-
-    if enviar:
-        try:
-            client.send(str(i).encode())
-        except Exception as e:
-            print("Error enviando:", e)
-
-    if verificar_todo(X,Y,Z):
-        g = 1
-        if local_player_id == 0:
-            contador_ganadas_jugador1 += 1
-        else:
-            contador_ganadas_jugador2 += 1
-        actualizar_labels()
-        label_turn.text = f"¡GANASTE!\n"
-        return
-
-    turno = 1 - turno
-    actualizar_labels()
+        # Jugada inválida
+        aviso = Label(tablero, text='Jugada inválida', font=('arial', 12), fg='green', bg='lightgray')
+        aviso.place(x=50, y=30)
+        # quitar aviso después de 1.5s
+        tablero.after(1500, aviso.destroy)
 
 def aplicar_jugada_remota(i):
-    global turno, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+    """
+    Actualiza el tablero sin enviar la jugada al servidor.
+    Debemos colocar la jugada como si la hubiera jugado el otro jugador.
+    """
+    global jugador
+    # La jugada remota corresponde al jugador contrario, así que seteamos jugador
+    # al jugador remoto antes de aplicar. Si local era 0 y jugó remoto, remote=1
+    jugador = 1 - jugador
+    # Llamamos a botonClick con enviar=False para que no reenvíe
+    botonClick(i, enviar=False, es_remoto=True)
+    # Después de aplicar, el toggle dentro de botonClick ya habrá puesto
+    # el turno de vuelta al jugador local (si corresponde)
 
-    X, Y, Z = index_to_xyz(i)
-    if jugadas[Z][Y][X] != 0:
-        return
+def ganador():
+    global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+    texto_ganador = Label(tablero, text=f'Jugador {jugador + 1} GANÓ', font=('arial', 20), fg='green', bg='lightgray')
+    texto_ganador.place(x=50, y=30)
+    g = 1
+    contar_ganadas()
+    actualizar_puntaje()
 
-    if local_player_id == 0:
-        jugadas[Z][Y][X] = 1
-        dibujar_o(i)
-    else:
-        jugadas[Z][Y][X] = -1
-        dibujar_x(i)
-
-    if verificar_todo(X,Y,Z):
-        g = 1
-        if local_player_id == 0:
-            contador_ganadas_jugador2 += 1
-        else:
-            contador_ganadas_jugador1 += 1
-        actualizar_labels()
-        label_turn.text = f"¡Perdiste!\n"
-        return
-
-    turno = 1 - turno
-    actualizar_labels()
-
-# =====================================================================
-#                    VERIFICACIÓN DE LÍNEAS
-# =====================================================================
-def verificar_todo(X,Y,Z):
-    return (
-        horizontal(Y,Z) or vertical(X,Z) or profundidad(X,Y) or
-        diagonal_frontal(Z) or diagonal_vertical(X) or
-        diagonal_horizontal(Y) or diagonal_cruzada()
+def verificar_todo(X, Y, Z):
+   return (
+         horizontal(Y, Z) or
+            vertical(X, Z) or
+            profundidad(X, Y) or
+            diagonal_frontal(Z) or
+            diagonal_vertical(X) or
+            diagonal_horizontal(Y) or
+            diagonal_cruzada()
     )
 
-def horizontal(Y,Z):
+def horizontal(Y, Z):
     return abs(sum(jugadas[Z][Y][x] for x in range(4))) == 4
 
-def vertical(X,Z):
+def vertical(X, Z):
     return abs(sum(jugadas[Z][y][X] for y in range(4))) == 4
 
-def profundidad(X,Y):
+def profundidad(X, Y):
     return abs(sum(jugadas[z][Y][X] for z in range(4))) == 4
 
 def diagonal_frontal(Z):
@@ -223,141 +166,58 @@ def diagonal_cruzada():
         abs(sum(jugadas[i][3-i][3-i] for i in range(4))) == 4
     )
 
-# =====================================================================
-#                          EVENTOS
-# =====================================================================
-def on_click(evt):
-    """
-    FIX: VPython on some versions (and on Python 3.14) may send events
-    without a 'pick' attribute or with pick == None.
-    We safely handle both cases and map the picked object to our celdas.
-    """
-    # guard: evt might not have pick, or pick can be None
-    picked_obj = getattr(evt, "pick", None)
-    if picked_obj is None:
-        return
-
-    # if the picked object already has an index attribute, use it
-    if hasattr(picked_obj, "index"):
-        idx = picked_obj.index
-        global selected_index
-        selected_index = idx
-        highlight_cell(selected_index)
-        return
-
-    # otherwise find which celda matches the picked object
-    for idx, celda in celdas.items():
-        if picked_obj is celda:
-            selected_index = idx
-            highlight_cell(selected_index)
-            return
-
-    # clicked on something else -> ignore
-    return
-
-scene.bind("click", on_click)
-
-def keydown(evt):
-    global selected_index
-    key = evt.key.lower()
-    X, Y, Z = index_to_xyz(selected_index)
-
-    if key == "left": X = max(0, X-1)
-    elif key == "right": X = min(3, X+1)
-    elif key == "up": Y = min(3, Y+1)
-    elif key == "down": Y = max(0, Y-1)
-    elif key == "w": Z = min(3, Z+1)
-    elif key == "s": Z = max(3, Z-1)
-    elif key in ("enter", " "):
-        i = xyz_to_index(X,Y,Z)
-        poner_jugada(i)
-        return
-
-    selected_index = xyz_to_index(X,Y,Z)
-    highlight_cell(selected_index)
-
-scene.bind("keydown", keydown)
-
-def reiniciar(ev=None):
-    global jugadas, marcadores, g, turno
+def tableronuevo():
+    global jugadas, botones, X, Y, Z, g, jugador
     jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
-    for idx in list(marcadores.keys()):
-        for m in marcadores[idx]:
-            try:
-                m.visible = False
-            except:
-                pass
-        marcadores[idx] = []
+    X = Y = Z = 0
     g = 0
-    turno = 0
-    highlight_cell(0)
-    actualizar_labels()
+    jugador = 0
+    for b in range(64):
+        botones[b].config(text=' ')
+    texto_actual.config(text='Jugador 1')
 
-button(bind=reiniciar, text="Reiniciar tablero")
+def contar_ganadas():
+    global contador_ganadas_jugador1, contador_ganadas_jugador2, jugador
+    # el jugador que acaba de ganar es el que estaba en 'jugador'
+    if jugador == 0:
+        contador_ganadas_jugador1 += 1
+    else:
+        contador_ganadas_jugador2 += 1
 
-highlight_cell(selected_index)
-actualizar_labels()
+def actualizar_puntaje():
+    puntaje_jugador1.config(text=f'Jugador 1: {contador_ganadas_jugador1}')
+    puntaje_jugador2.config(text=f'Jugador 2: {contador_ganadas_jugador2}')
 
-# =====================================================================
-#                    HILO DE RECEPCIÓN
-# =====================================================================
-def recibir():
-    global local_player_id, opponent_name, turno
+# ========== INTERFAZ TKINTER ==========
+tablero = Tk()
+tablero.title('Tic Tac Toe 3D ONLINE')
+tablero.geometry("1040x720+100+50")
+tablero.resizable(0, 0)
+tablero.config(bg='lightgray')
 
-    while True:
-        try:
-            data = client.recv(1024)
-            if not data:
-                break
+puntaje_jugador1 = Label(tablero, text='Jugador 1: 0', font=('arial', 20), fg='blue', bg='lightgray')
+puntaje_jugador1.place(x=50, y=100)
 
-            text = data.decode(errors='ignore')
+puntaje_jugador2 = Label(tablero, text='Jugador 2: 0', font=('arial', 20), fg='red', bg='lightgray')
+puntaje_jugador2.place(x=50, y=150)
 
-            if text.startswith("START:"):
-                try:
-                    local_player_id = int(text.split(":")[1])
-                    turno = 0
-                    actualizar_labels()
-                except:
-                    pass
-                continue
+Button(tablero, text="Salir", command=tablero.destroy, bg='red', fg='white', font=('arial', 12, 'bold')).place(x=900, y=650)
+Button(tablero, text="Reiniciar", command=tableronuevo, bg='blue', fg='white', font=('arial', 12, 'bold')).place(x=800, y=650)
 
-            if text.startswith("NAME:"):
-                n = text.split(":",1)[1]
-                if n != player_name:
-                    opponent_name = n
-                    actualizar_labels()
-                continue
+titulo = Label(tablero, text='Tic Tac Toe 3D Online', font=('arial', 30, 'bold'), fg='black', bg='lightgray')
+titulo.place(x=350, y=10)
 
-            # jugada remota (puede venir como "MOVE:NN" o solo "NN")
-            # manejamos posible prefijo
-            if text.startswith("MOVE:"):
-                payload = text.split(":",1)[1]
-            else:
-                payload = text
+for b in range(64):
+    botones.append(crearBoton(' ', b))
 
-            try:
-                i = int(payload.strip())
-                aplicar_jugada_remota(i)
-            except:
-                pass
+contador = 0
+for z in range(3, -1, -1):
+    for y in range(4):
+        for x in range(4):
+            botones[contador].grid(row=y + z * 4, column=x + (3 - z) * 4)
+            contador += 1
 
-        except Exception as e:
-            # evita que el hilo muera en silencio; imprime el error para debug
-            print("Error hilo recibir:", e)
-            break
+texto_actual = Label(tablero, text='Jugador 1', font=('arial', 20), fg='green', bg='lightgray')
+texto_actual.place(x=500, y=620)
 
-threading.Thread(target=recibir, daemon=True).start()
-
-# =====================================================================
-#                      LOOP PRINCIPAL
-# =====================================================================
-try:
-    while True:
-        rate(30)
-except KeyboardInterrupt:
-    pass
-finally:
-    try:
-        client.close()
-    except:
-        pass
+tablero.mainloop()
