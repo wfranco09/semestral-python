@@ -1,65 +1,101 @@
-# server.py
 import socket
 import threading
 
 clientes = []
+nombres = ["", ""]   # para 2 jugadores
 clientes_lock = threading.Lock()
 
-def manejar_cliente(conn, addr):
+def manejar_cliente(conn, addr, index):
+    global nombres
+
     print(f"Jugador conectado: {addr}")
-    with clientes_lock:
-        clientes.append(conn)
 
     try:
         while True:
             data = conn.recv(1024)
             if not data:
                 break
-            # reenviar jugada a todos menos al que la envió
+
+            mensaje = data.decode()
+
+            # ======= SI ES UN NOMBRE =======
+            if mensaje.startswith("NOMBRE:"):
+                nombre = mensaje.replace("NOMBRE:", "")
+                nombres[index] = nombre  
+                print(f"Jugador {index+1} es: {nombre}")
+
+                # Enviar nombres actualizados a ambos jugadores
+                enviar_nombres()
+                continue
+
+            # ======= SI ES UNA JUGADA =======
             with clientes_lock:
-                for c in clientes.copy():
+                for i, c in enumerate(clientes):
                     if c != conn:
                         try:
                             c.sendall(data)
-                        except Exception as e:
-                            print("Error al enviar a un cliente:", e)
-                            try:
-                                clientes.remove(c)
-                                c.close()
-                            except:
-                                pass
+                        except:
+                            pass
+
     except Exception as e:
-        print("Excepción en cliente:", e)
+        print("Error:", e)
+
     finally:
-        print("Jugador desconectado:", addr)
+        print(f"Jugador desconectado: {addr}")
+
         with clientes_lock:
             try:
                 clientes.remove(conn)
-            except ValueError:
+            except:
                 pass
+
         conn.close()
 
+
+def enviar_nombres():
+    """Envía NOMBRE1 y NOMBRE2 a ambos jugadores cuando los tengan."""
+    if len(clientes) < 2:
+        return  # esperar al otro jugador
+
+    try:
+        clientes[0].sendall(f"NOMBRE1:{nombres[0]}".encode())
+        clientes[0].sendall(f"NOMBRE2:{nombres[1]}".encode())
+
+        clientes[1].sendall(f"NOMBRE1:{nombres[0]}".encode())
+        clientes[1].sendall(f"NOMBRE2:{nombres[1]}".encode())
+    except:
+        pass
+
+
 def main():
+    global clientes
+
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("0.0.0.0", 5000))
     server.listen(2)
+
     print("SERVIDOR LISTO — Esperando jugadores...")
 
     try:
-        while True:
+        while len(clientes) < 2:
             conn, addr = server.accept()
-            threading.Thread(target=manejar_cliente, args=(conn, addr), daemon=True).start()
+            with clientes_lock:
+                clientes.append(conn)
+
+            index = len(clientes) - 1  # 0 ó 1
+            threading.Thread(target=manejar_cliente, args=(conn, addr, index), daemon=True).start()
+
     except KeyboardInterrupt:
         print("Apagando servidor...")
     finally:
-        with clientes_lock:
-            for c in clientes:
-                try:
-                    c.close()
-                except:
-                    pass
+        for c in clientes:
+            try:
+                c.close()
+            except:
+                pass
         server.close()
+
 
 if __name__ == "__main__":
     main()
