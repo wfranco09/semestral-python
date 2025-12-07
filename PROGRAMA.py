@@ -2,6 +2,7 @@ import socket
 import threading
 import tkinter as tk
 from tkinter import Button, Label, Tk, simpledialog, messagebox
+import random
 
 # ==================== CONFIGURACIÓN INICIAL ====================
 # Valores por defecto para la conexión
