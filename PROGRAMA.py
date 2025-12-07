@@ -11,51 +11,30 @@ PUERTO_DEFECTO = 5000
 texto_ganador = None
 
 # Ventana temporal para los diálogos de configuración
-# ================== Ventana inicial gamer ==================
-root_cfg = tk.Tk()
-root_cfg.title("⚡ Conexión al Servidor ⚡")
-root_cfg.geometry("500x150+500+300")
-root_cfg.resizable(0, 0)
-root_cfg.config(bg="#18324e")
+root_cfg = Tk()
+root_cfg.withdraw()  # Ocultar la ventana principal
 
-# Animación de título
-neon_colors = ['#FF073A', '#FF8C00', '#FFD300', '#0AFF99', '#00CFFF', '#8A2BE2']
-titulo = tk.Label(root_cfg, text="Conéctate al Servidor", font=("Arial Black", 20), fg="white", bg="#18324e")
-titulo.pack(pady=20)
-
-def animar_titulo():
-    color = random.choice(neon_colors)
-    titulo.config(fg=color)
-    root_cfg.after(200, animar_titulo)
-
-animar_titulo()
-
-# Mostrar la ventana brevemente para animación antes de pedir IP/PUERTO
-root_cfg.update()
-root_cfg.after(500, root_cfg.withdraw)  # Oculta después de medio segundo
-
-# ================== Pedir IP y Puerto ==================
+# Solicitar IP del servidor al usuario
 ip_input = simpledialog.askstring(
     "Conexión",
     "IP del servidor (LAN o Tailscale 100.x.x.x):",
     initialvalue=IP_SERVIDOR_DEFECTO,
-    parent=root_cfg
 )
 if not ip_input:
     ip_input = IP_SERVIDOR_DEFECTO
 
+# Solicitar puerto del servidor al usuario
 puerto_input = simpledialog.askinteger(
     "Conexión",
     "Puerto del servidor:",
     initialvalue=PUERTO_DEFECTO,
-    parent=root_cfg
 )
 if not puerto_input:
     puerto_input = PUERTO_DEFECTO
 
 IP_SERVIDOR = ip_input
 PUERTO = puerto_input
-    
+
 # ==================== CONEXIÓN AL SERVIDOR ====================
 # Crear socket TCP/IP para la conexión
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
