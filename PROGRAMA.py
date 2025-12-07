@@ -222,22 +222,22 @@ def jugador_cambia():
 
 
 def ganador():
-    global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2, texto_ganador
+    """Muestra mensaje de victoria y actualiza contadores"""
+    global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2
+    
     nombre = nombre_jugador1 if jugador == 0 else nombre_jugador2
-
-    if texto_ganador:
-        texto_ganador.destroy()
-
     texto_ganador = Label(tablero, text=f"🎉 {nombre} GANÓ 🎉",
                           font=("Arial Black", 20), fg="#FFDD00", bg="#18324e")
     texto_ganador.place(x=650, y=550)
+    
+    # Marcar el juego como terminado
     g = 1
-
+    
+    # Actualizar contador de victorias
     if jugador == 0:
         contador_ganadas_jugador1 += 1
     else:
         contador_ganadas_jugador2 += 1
-
     actualizar_puntaje()
 
 
