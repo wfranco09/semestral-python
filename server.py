@@ -11,7 +11,7 @@ def recv_line(sock, buffer_dict, key):
     buffer = buffer_dict.get(key, "")
     
     while True:
-        # Si ya tenemos una línea completa, devolverla
+        # Si ya tenemos una línea completa, la devolvemos
         if EOL in buffer:
             line, buffer = buffer.split(EOL, 1)
             buffer_dict[key] = buffer  # Guardar lo que sobra
@@ -25,20 +25,11 @@ def recv_line(sock, buffer_dict, key):
         # Agregar nuevos datos al buffer
         buffer += data.decode("utf-8")
 
-
+#Función creada para que basicamente maneje el multijugador C1 y C2
 def handle_pair(c1, c2):
-    """
-    Maneja la comunicación entre dos clientes conectados.
-    Intercambia nombres y luego reenvía todas las jugadas entre ellos.
-    
-    Args:
-        c1: socket del jugador 1
-        c2: socket del jugador 2
-    """
+
     # Diccionario para buffers de cada cliente
     buffers = {}
-
-    # ===== INTERCAMBIO DE NOMBRES =====
     # Recibir nombre de cada jugador (formato: "NOMBRE:nombre")
     name1_full = recv_line(c1, buffers, "c1")
     name2_full = recv_line(c2, buffers, "c2")
@@ -59,17 +50,8 @@ def handle_pair(c1, c2):
     c2.sendall(f"NOMBRE1:{name1}{EOL}".encode("utf-8"))
     c2.sendall(f"NOMBRE2:{name2}{EOL}".encode("utf-8"))
 
-    # ===== REENVÍO DE MENSAJES =====
+    # función implemetnada que envia mensajes de un cliente al otro 
     def forward(src, dst, key_src):
-        """
-        Lee mensajes de un cliente (src) y los reenvía al otro (dst).
-        Se ejecuta en un hilo separado para cada dirección.
-        
-        Args:
-            src: socket origen (quien envía)
-            dst: socket destino (quien recibe)
-            key_src: clave del buffer del origen
-        """
         while True:
             # Leer un mensaje completo del origen
             msg = recv_line(src, buffers, key_src)

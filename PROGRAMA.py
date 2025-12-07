@@ -6,7 +6,7 @@ import random
 
 # ==================== CONFIGURACIÓN INICIAL ====================
 # Valores por defecto para la conexión
-IP_SERVIDOR_DEFECTO = "100.94.222.75"
+IP_SERVIDOR_DEFECTO = "192.168.1.15"
 PUERTO_DEFECTO = 5000
 
 # Ventana temporal para los diálogos de configuración
@@ -34,7 +34,7 @@ if not puerto_input:
 IP_SERVIDOR = ip_input
 PUERTO = puerto_input
 
-# ==================== CONEXIÓN AL SERVIDOR ====================
+# Aui la conexión del servidor
 # Crear socket TCP/IP para la conexión
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -55,10 +55,10 @@ if not nombre_local:
 # Enviar nombre al servidor
 client.sendall((f"NOMBRE:{nombre_local}\n").encode())
 
-# ==================== VARIABLES GLOBALES DEL JUEGO ====================
+# Variables que usaremos globalmente en el programa
 # Nombres de los jugadores (se actualizan desde el servidor)
-nombre_jugador1 = "Jugador 1"
-nombre_jugador2 = "Jugador 2"
+nombre_jugador1 = "turno de Jugador 1"
+nombre_jugador2 = "turno de Jugador 2"
 
 # Indica si este cliente es el Jugador 1 (True) o Jugador 2 (False)
 ES_JUGADOR_1 = None
@@ -83,7 +83,7 @@ jugador = 0
 contador_ganadas_jugador1 = 0
 contador_ganadas_jugador2 = 0
 
-# ==================== RECEPCIÓN DESDE EL SERVIDOR ====================
+# aqui la recepcion desde el servidor
 # Buffer para acumular datos recibidos de la red
 buffer_red = ""  
 
@@ -146,7 +146,8 @@ def recibir_jugadas():
             print("Error al recibir:", e)
             break
 
-# ==================== LÓGICA DEL JUEGO ====================
+
+#Logica mejorada que nos dió el profesor Euclides con su documentación interna
 def crearBoton(valor, i):
     """Crea un botón para el tablero con su índice asociado"""
     return Button(
@@ -213,14 +214,19 @@ def botonClick(i, enviar=True):
         # Cambiar turno al otro jugador
         jugador_cambia()
 
-
+#función que basicamente cambia el jugador en la parte de abajo de la pantalla turno de: 
 def jugador_cambia():
     """Cambia el turno al otro jugador"""
     global jugador
     jugador = 1 - jugador
-    texto_actual.config(text=(nombre_jugador1 if jugador == 0 else nombre_jugador2))
+    if jugador == 0:
+        texto_actual.config(text=f"Turno de: {nombre_jugador1}")
+    else:
+        texto_actual.config(text=f"Turno de: {nombre_jugador2}")
 
 
+
+# función que apliqué para que se vea quien gana y que se salga cuando gane un jugador
 def ganador():
     """Muestra mensaje de victoria y actualiza contadores"""
     global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2
@@ -240,7 +246,7 @@ def ganador():
         contador_ganadas_jugador2 += 1
     actualizar_puntaje()
 
-
+#esto es una forma optimizada de la explicación en clase de las formas de como ganar
 def verificar_todo(X, Y, Z):
     """
     Verifica todas las posibles líneas ganadoras desde la posición (X,Y,Z)
@@ -256,6 +262,7 @@ def verificar_todo(X, Y, Z):
         or diagonal_cruzada()
     )
 
+# verficiaciones de las formas
 
 def horizontal(Y, Z):
     """Verifica línea horizontal en la capa Z, fila Y"""
@@ -305,7 +312,7 @@ def diagonal_cruzada():
         or abs(sum(jugadas[i][3 - i][3 - i] for i in range(4))) == 4
     )
 
-
+# función que basicamente limpia todo cuando se toque el boton de reiniciar
 def tableronuevo():
     global jugadas, g, jugador, texto_ganador
     jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
@@ -316,14 +323,17 @@ def tableronuevo():
         botones[b].config(text=' ')
 
     texto_actual.config(text=nombre_jugador1)
+    texto_ganador = Label(tablero, text='                                           ',                
+                          font=("Arial Black", 20), fg="#FFDD00", bg="#18324e")
+    texto_ganador.place(x=650, y=550)
 
-    if texto_ganador:
-        texto_ganador.destroy()
-        texto_ganador = None
 
-
+#función que hice para que sea mas intersante jugar al llevar una cuenta de quien va ganando
 def actualizar_puntaje():
     """Actualiza las etiquetas con el puntaje actual"""
+    titulo= Label(tablero, text='Jugadores',
+               font=('arial', 24, 'bold'), fg='white', bg='#18324e')
+    titulo.place(x=50, y=70)
     puntaje_jugador1.config(
         text=f"{nombre_jugador1}: {contador_ganadas_jugador1}"
     )
@@ -331,11 +341,11 @@ def actualizar_puntaje():
         text=f"{nombre_jugador2}: {contador_ganadas_jugador2}"
     )
 
-# ==================== INTERFAZ GRÁFICA (TKINTER) ====================
+# Interfaz con Tk visto en clase mejorada
 
 # Crear ventana principal
 tablero = Tk()
-tablero.title('Tic Tac Toe 3D ONLINE')
+tablero.title('Tic Tac Toe 3D MULTIJUGADOR')
 tablero.geometry("1040x720+100+50")
 tablero.resizable(0, 0)
 tablero.config(bg='#18324e')
@@ -346,12 +356,12 @@ def animar_titulo():
     titulo.config(fg=color)
     tablero.after(200, animar_titulo)
 
-puntaje_jugador1 = Label(tablero, text=f'{nombre_jugador1}: 0',
-                         font=('arial', 20), fg='white', bg='#18324e')
+puntaje_jugador1 = Label(tablero, text=f' {nombre_jugador1}: 0',
+                         font=('arial', 20), fg='#00CFFF', bg='#18324e')
 puntaje_jugador1.place(x=50, y=100)
 
 puntaje_jugador2 = Label(tablero, text=f'{nombre_jugador2}: 0',
-                         font=('arial', 20), fg='white', bg='#18324e')
+                         font=('arial', 20), fg='#00CFFF', bg='#18324e')
 puntaje_jugador2.place(x=50, y=150)
 
 Button(tablero, text="❌ Salir",
@@ -366,9 +376,9 @@ Button(tablero, text="🔄 Reiniciar",
        width=12,
        command=tableronuevo).place(x=850, y=650)
 
-titulo = Label(tablero, text='Tic Tac Toe 3D Online',
+titulo = Label(tablero, text='Tic Tac Toe Multijugador',
                font=('arial', 30, 'bold'), fg='black', bg='#18324e')
-titulo.place(x=350, y=10)
+titulo.place(x=280, y=10)
 animar_titulo()
 
 # Crear los 64 botones del tablero (4x4x4)
@@ -383,15 +393,16 @@ for z in range(3, -1, -1):  # De capa superior a inferior
             botones[contador].grid(row=y + z * 4, column=x + (3 - z) * 4)
             contador += 1
 
-# Etiqueta que muestra el turno actual
+# Etiqueta que muestra el turno actualturno de jugador
 texto_actual = Label(
     tablero,
-    text=nombre_jugador1,
+    text=f"Turno de: {nombre_jugador1}",
     font=("arial", 20),
     fg="white",
-    bg="#18324e",
+    bg="#18324e"
 )
-texto_actual.place(x=500, y=620)
+texto_actual.place(x=410, y=610)
+
 
 # Iniciar hilo para recibir jugadas del servidor
 threading.Thread(target=recibir_jugadas, daemon=True).start()
