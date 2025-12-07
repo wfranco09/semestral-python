@@ -388,8 +388,8 @@ texto_actual = Label(
     tablero,
     text=nombre_jugador1,
     font=("arial", 20),
-    fg="green",
-    bg="lightgray",
+    fg="white",
+    bg="#18324e",
 )
 texto_actual.place(x=500, y=620)
 
