@@ -2,13 +2,11 @@ import socket
 import threading
 import tkinter as tk
 from tkinter import Button, Label, Tk, simpledialog, messagebox
-import random
 
 # ==================== CONFIGURACIÓN INICIAL ====================
 # Valores por defecto para la conexión
 IP_SERVIDOR_DEFECTO = "100.94.222.75"
 PUERTO_DEFECTO = 5000
-texto_ganador = None
 
 # Ventana temporal para los diálogos de configuración
 root_cfg = Tk()
@@ -148,7 +146,6 @@ def recibir_jugadas():
             break
 
 # ==================== LÓGICA DEL JUEGO ====================
-
 def crearBoton(valor, i):
     """Crea un botón para el tablero con su índice asociado"""
     return Button(
