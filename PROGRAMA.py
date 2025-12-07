@@ -1,120 +1,255 @@
 import socket
 import threading
 import tkinter as tk
-from tkinter import Button, Label, Tk, simpledialog
+from tkinter import Button, Label, Tk, simpledialog, messagebox
 import random
 
-# ================== VENTANA INICIAL ==================
-root = Tk()
-root.withdraw()  # Oculta ventana principal mientras pedimos datos
+# ==================== CONFIGURACIÓN INICIAL ====================
+# Valores por defecto para la conexión
+# ==================== CONFIGURACIÓN INICIAL COOL ====================
+IP_SERVIDOR_DEFECTO = "100.94.222.75"
+PUERTO_DEFECTO = 5000
+texto_ganador = None
 
-# Pedir IP del servidor (Tailscale)
-IP_SERVIDOR = simpledialog.askstring("Conexión", "Ingresa la IP del servidor (Tailscale):")
-if not IP_SERVIDOR:
-    raise SystemExit("No ingresaste IP. Saliendo...")
+config_guardada = {}  # Guardará IP y PUERTO
 
-# Pedir nombre del jugador
+root_cfg = Tk()
+root_cfg.title("Conexión al Servidor")
+root_cfg.geometry("500x300+400+200")
+root_cfg.resizable(0, 0)
+root_cfg.config(bg="#18324e")
+
+neon_colors = ['#FF073A', '#FF8C00', '#FFD300', '#0AFF99', '#00CFFF', '#8A2BE2']
+
+titulo_cfg = Label(root_cfg, text="⚡ Conéctate al Servidor ⚡",
+                   font=("arial", 25, "bold"), fg="white", bg="#18324e")
+titulo_cfg.place(x=50, y=20)
+
+def animar_titulo_cfg():
+    color = random.choice(neon_colors)
+    titulo_cfg.config(fg=color)
+    root_cfg.after(200, animar_titulo_cfg)
+
+animar_titulo_cfg()
+
+# Entradas para IP y Puerto
+Label(root_cfg, text="IP del Servidor:", font=("arial", 14), fg="white", bg="#18324e").place(x=50, y=100)
+entry_ip = tk.Entry(root_cfg, font=("arial", 14))
+entry_ip.place(x=250, y=100)
+entry_ip.insert(0, IP_SERVIDOR_DEFECTO)
+
+Label(root_cfg, text="Puerto:", font=("arial", 14), fg="white", bg="#18324e").place(x=50, y=150)
+entry_puerto = tk.Entry(root_cfg, font=("arial", 14))
+entry_puerto.place(x=250, y=150)
+entry_puerto.insert(0, str(PUERTO_DEFECTO))
+
+def guardar_config():
+    ip_input = entry_ip.get().strip() or IP_SERVIDOR_DEFECTO
+    try:
+        puerto_input = int(entry_puerto.get().strip())
+    except:
+        puerto_input = PUERTO_DEFECTO
+    config_guardada["IP"] = ip_input
+    config_guardada["PUERTO"] = puerto_input
+    root_cfg.destroy()
+
+Button(root_cfg, text="Conectar", font=("Arial Black", 12),
+       bg="#00FF00", fg="black", width=12, command=guardar_config).place(x=180, y=220)
+
+root_cfg.mainloop()
+
+# Usar los valores ingresados
+IP_SERVIDOR = config_guardada.get("IP", IP_SERVIDOR_DEFECTO)
+PUERTO = config_guardada.get("PUERTO", PUERTO_DEFECTO)
+
+    
+# ==================== CONEXIÓN AL SERVIDOR ====================
+# Crear socket TCP/IP para la conexión
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+    # Intentar conectar al servidor
+    client.connect((IP_SERVIDOR, PUERTO))
+    print("Conectado al servidor.")
+except Exception as e:
+    # Mostrar error si falla la conexión
+    messagebox.showerror("Error", f"No se pudo conectar al servidor:\n{e}")
+    raise SystemExit(1)
+
+# Solicitar nombre del jugador
 nombre_local = simpledialog.askstring("Identificación", "Ingresa tu nombre:")
 if not nombre_local:
     nombre_local = "Jugador"
 
-PUERTO = 5000
-texto_ganador = None
+# Enviar nombre al servidor
+client.sendall((f"NOMBRE:{nombre_local}\n").encode())
 
-
-# ================== CONEXIÓN AL SERVIDOR ==================
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    client.connect((IP_SERVIDOR, PUERTO))
-    print("Conectado al servidor.")
-    # Enviar nombre al servidor
-    client.sendall(("NOMBRE:" + nombre_local).encode())
-except Exception as e:
-    print("No se pudo conectar al servidor:", e)
-    raise SystemExit(1)
-
-# ================== VARIABLES DEL JUEGO ==================
+# ==================== VARIABLES GLOBALES DEL JUEGO ====================
+# Nombres de los jugadores (se actualizan desde el servidor)
 nombre_jugador1 = "Jugador 1"
 nombre_jugador2 = "Jugador 2"
+
+# Indica si este cliente es el Jugador 1 (True) o Jugador 2 (False)
+ES_JUGADOR_1 = None
+
+# Matriz 3D que almacena el estado del tablero [z][y][x]
+# 0 = vacío, -1 = jugador 1 (X), 1 = jugador 2 (O)
 jugadas = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
+
+# Lista de botones de la interfaz gráfica
 botones = []
+
+# Coordenadas de la última jugada
 X = Y = Z = 0
+
+# Bandera: 1 = juego terminado, 0 = juego en curso
 g = 0
+
+# Turno actual: 0 = jugador 1, 1 = jugador 2
 jugador = 0
+
+# Contadores de victorias
 contador_ganadas_jugador1 = 0
 contador_ganadas_jugador2 = 0
 
-# ================== RECEPCIÓN DE JUGADAS Y NOMBRES ==================
+# ==================== RECEPCIÓN DESDE EL SERVIDOR ====================
+# Buffer para acumular datos recibidos de la red
+buffer_red = ""  
+
+def aplicar_jugada_remota(i):
+    """Aplica una jugada recibida del oponente"""
+    botonClick(i, enviar=False)
+
+
 def recibir_jugadas():
-    global nombre_jugador1, nombre_jugador2
+    """Hilo que escucha continuamente mensajes del servidor"""
+    global nombre_jugador1, nombre_jugador2, buffer_red
+    global puntaje_jugador1, puntaje_jugador2, ES_JUGADOR_1
+    
     while True:
         try:
+            # Recibir datos del servidor (máximo 1024 bytes)
             data = client.recv(1024)
             if not data:
                 print("Conexión cerrada por el servidor.")
                 break
 
-            texto = data.decode()
+            # Agregar datos al buffer y procesar línea por línea
+            buffer_red += data.decode()
 
-            # Nombres enviados por el otro jugador
-            if texto.startswith("NOMBRE1:"):
-                nombre_jugador1 = texto.replace("NOMBRE1:", "")
-                puntaje_jugador1.config(text=f"{nombre_jugador1}: {contador_ganadas_jugador1}")
-                continue
-            if texto.startswith("NOMBRE2:"):
-                nombre_jugador2 = texto.replace("NOMBRE2:", "")
-                puntaje_jugador2.config(text=f"{nombre_jugador2}: {contador_ganadas_jugador2}")
-                continue
+            while "\n" in buffer_red:
+                # Separar la primera línea completa
+                linea, buffer_red = buffer_red.split("\n", 1)
+                texto = linea
 
-            # Jugadas
-            if texto.isdigit():
-                i = int(texto)
-                aplicar_jugada_remota(i)
+                # Procesar comando NOMBRE1 (nombre del jugador 1)
+                if texto.startswith("NOMBRE1:"):
+                    nombre_jugador1 = texto.replace("NOMBRE1:", "")
+                    puntaje_jugador1.config(
+                        text=f"{nombre_jugador1}: {contador_ganadas_jugador1}"
+                    )
+                    # Identificar si soy el jugador 1
+                    if ES_JUGADOR_1 is None and nombre_jugador1 == nombre_local:
+                        ES_JUGADOR_1 = True
+                    continue
+
+                # Procesar comando NOMBRE2 (nombre del jugador 2)
+                if texto.startswith("NOMBRE2:"):
+                    nombre_jugador2 = texto.replace("NOMBRE2:", "")
+                    puntaje_jugador2.config(
+                        text=f"{nombre_jugador2}: {contador_ganadas_jugador2}"
+                    )
+                    # Identificar si soy el jugador 2
+                    if ES_JUGADOR_1 is None and nombre_jugador2 == nombre_local:
+                        ES_JUGADOR_1 = False
+                    continue
+
+                # Procesar jugadas (recibir índice de botón jugado)
+                if texto.isdigit():
+                    i = int(texto)
+                    print("Oponente jugó:", i)
+                    # Ejecutar jugada en el hilo principal de tkinter
+                    tablero.after(0, aplicar_jugada_remota, i)
 
         except Exception as e:
             print("Error al recibir:", e)
             break
 
-threading.Thread(target=recibir_jugadas, daemon=True).start()
+# ==================== LÓGICA DEL JUEGO ====================
 
-# ================== LÓGICA DEL JUEGO ==================
 def crearBoton(valor, i):
-    return Button(tablero, text=valor, width=5, height=1, font=("Helvetica", 15),
-                  command=lambda: botonClick(i, enviar=True))
+    """Crea un botón para el tablero con su índice asociado"""
+    return Button(
+        tablero,
+        text=valor,
+        width=5,
+        height=1,
+        font=("Helvetica", 15),
+        command=lambda: botonClick(i, enviar=True),
+    )
+
 
 def botonClick(i, enviar=True):
-    global jugador, jugadas, X, Y, Z, g
-    Z = int(i / 16)
+    """
+    Maneja el clic en un botón del tablero
+    i: índice del botón (0-63)
+    enviar: si True, envía la jugada al servidor
+    """
+    global jugador, jugadas, X, Y, Z, g, ES_JUGADOR_1
+    
+    # Calcular coordenadas 3D desde el índice lineal
+    Z = int(i / 16)  # Capa (0-3)
     y = i % 16
-    Y = int(y / 4)
-    X = y % 4
+    Y = int(y / 4)   # Fila (0-3)
+    X = y % 4        # Columna (0-3)
 
+    # No permitir jugadas si el juego terminó
     if g:
         return
 
+    # Validar turno: solo permitir jugar cuando es tu turno
+    if enviar and ES_JUGADOR_1 is not None:
+        if ES_JUGADOR_1 and jugador != 0:  # Soy jugador 1, pero no es mi turno
+            return  
+        if (not ES_JUGADOR_1) and jugador != 1:  # Soy jugador 2, pero no es mi turno
+            return 
+
+    # Verificar que la casilla esté vacía
     if not jugadas[Z][Y][X]:
+        # Marcar la jugada: -1 para X, 1 para O
         marca = -1 if jugador == 0 else 1
         jugadas[Z][Y][X] = marca
-
+        
+        # Actualizar texto del botón
         texto_marca = "X" if jugador == 0 else "O"
-        botones[i].config(text=texto_marca, font='arial_black 15',
-                          fg='blue' if jugador == 0 else 'red')
+        botones[i].config(
+            text=texto_marca,
+            font="arial 15",
+            fg="blue" if jugador == 0 else "red",
+        )
 
+        # Enviar jugada al servidor (si es jugada local)
         if enviar:
             try:
-                client.sendall(str(i).encode())
+                client.sendall(f"{i}\n".encode())
             except Exception as e:
                 print("Error al enviar jugada:", e)
 
+        # Verificar si hay ganador
         if verificar_todo(X, Y, Z):
             ganador()
             return
 
-        jugador = 1 - jugador
-        texto_actual.config(text=(nombre_jugador1 if jugador == 0 else nombre_jugador2))
+        # Cambiar turno al otro jugador
+        jugador_cambia()
 
-def aplicar_jugada_remota(i):
-    botonClick(i, enviar=False)
+
+def jugador_cambia():
+    """Cambia el turno al otro jugador"""
+    global jugador
+    jugador = 1 - jugador
+    texto_actual.config(text=(nombre_jugador1 if jugador == 0 else nombre_jugador2))
+
 
 def ganador():
     global jugador, g, contador_ganadas_jugador1, contador_ganadas_jugador2, texto_ganador
@@ -135,51 +270,71 @@ def ganador():
 
     actualizar_puntaje()
 
+
 def verificar_todo(X, Y, Z):
+    """
+    Verifica todas las posibles líneas ganadoras desde la posición (X,Y,Z)
+    Retorna True si hay 4 en línea
+    """
     return (
-        horizontal(Y, Z) or
-        vertical(X, Z) or
-        profundidad(X, Y) or
-        diagonal_frontal(Z) or
-        diagonal_vertical(X) or
-        diagonal_horizontal(Y) or
-        diagonal_cruzada()
+        horizontal(Y, Z)
+        or vertical(X, Z)
+        or profundidad(X, Y)
+        or diagonal_frontal(Z)
+        or diagonal_vertical(X)
+        or diagonal_horizontal(Y)
+        or diagonal_cruzada()
     )
+
 
 def horizontal(Y, Z):
+    """Verifica línea horizontal en la capa Z, fila Y"""
     return abs(sum(jugadas[Z][Y][x] for x in range(4))) == 4
 
+
 def vertical(X, Z):
+    """Verifica línea vertical en la capa Z, columna X"""
     return abs(sum(jugadas[Z][y][X] for y in range(4))) == 4
 
+
 def profundidad(X, Y):
+    """Verifica línea en profundidad (atravesando capas) en posición X,Y"""
     return abs(sum(jugadas[z][Y][X] for z in range(4))) == 4
 
+
 def diagonal_frontal(Z):
+    """Verifica diagonales frontales en la capa Z"""
     return (
-        abs(sum(jugadas[Z][i][i] for i in range(4))) == 4 or
-        abs(sum(jugadas[Z][i][3-i] for i in range(4))) == 4
+        abs(sum(jugadas[Z][i][i] for i in range(4))) == 4
+        or abs(sum(jugadas[Z][i][3 - i] for i in range(4))) == 4
     )
+
 
 def diagonal_vertical(X):
+    """Verifica diagonales verticales en la columna X"""
     return (
-        abs(sum(jugadas[i][i][X] for i in range(4))) == 4 or
-        abs(sum(jugadas[i][3-i][X] for i in range(4))) == 4
+        abs(sum(jugadas[i][i][X] for i in range(4))) == 4
+        or abs(sum(jugadas[i][3 - i][X] for i in range(4))) == 4
     )
+
 
 def diagonal_horizontal(Y):
+    """Verifica diagonales horizontales en la fila Y"""
     return (
-        abs(sum(jugadas[i][Y][i] for i in range(4))) == 4 or
-        abs(sum(jugadas[3-i][Y][i] for i in range(4))) == 4
+        abs(sum(jugadas[i][Y][i] for i in range(4))) == 4
+        or abs(sum(jugadas[3 - i][Y][i] for i in range(4))) == 4
     )
 
+
 def diagonal_cruzada():
+    """Verifica las 4 diagonales tridimensionales que cruzan todo el cubo"""
     return (
-        abs(sum(jugadas[i][i][i] for i in range(4))) == 4 or
-        abs(sum(jugadas[i][i][3-i] for i in range(4))) == 4 or
-        abs(sum(jugadas[i][3-i][i] for i in range(4))) == 4 or
-        abs(sum(jugadas[i][3-i][3-i] for i in range(4))) == 4
+        abs(sum(jugadas[i][i][i] for i in range(4))) == 4
+        or abs(sum(jugadas[i][i][3 - i] for i in range(4))) == 4
+        or abs(sum(jugadas[i][3 - i][i] for i in range(4))) == 4
+        or abs(sum(jugadas[i][3 - i][3 - i] for i in range(4))) == 4
     )
+
 
 def tableronuevo():
     global jugadas, g, jugador, texto_ganador
@@ -196,11 +351,19 @@ def tableronuevo():
         texto_ganador.destroy()
         texto_ganador = None
 
-def actualizar_puntaje():
-    puntaje_jugador1.config(text=f'{nombre_jugador1}: {contador_ganadas_jugador1}')
-    puntaje_jugador2.config(text=f'{nombre_jugador2}: {contador_ganadas_jugador2}')
 
-# ================== INTERFAZ TKINTER ==================
+def actualizar_puntaje():
+    """Actualiza las etiquetas con el puntaje actual"""
+    puntaje_jugador1.config(
+        text=f"{nombre_jugador1}: {contador_ganadas_jugador1}"
+    )
+    puntaje_jugador2.config(
+        text=f"{nombre_jugador2}: {contador_ganadas_jugador2}"
+    )
+
+# ==================== INTERFAZ GRÁFICA (TKINTER) ====================
+
+# Crear ventana principal
 tablero = Tk()
 tablero.title('Tic Tac Toe 3D ONLINE')
 tablero.geometry("1040x720+100+50")
@@ -238,18 +401,30 @@ titulo = Label(tablero, text='Tic Tac Toe 3D Online',
 titulo.place(x=350, y=10)
 animar_titulo()
 
+# Crear los 64 botones del tablero (4x4x4)
 for b in range(64):
-    botones.append(crearBoton(' ', b))
+    botones.append(crearBoton(" ", b))
 
+# Posicionar botones en una cuadrícula 4x4 x 4 capas
 contador = 0
-for z in range(3, -1, -1):
-    for y in range(4):
-        for x in range(4):
+for z in range(3, -1, -1):  # De capa superior a inferior
+    for y in range(4):       # Filas
+        for x in range(4):   # Columnas
             botones[contador].grid(row=y + z * 4, column=x + (3 - z) * 4)
             contador += 1
 
-texto_actual = Label(tablero, text=nombre_jugador1,
-                     font=('arial', 20), fg='green', bg='#18324e')
+# Etiqueta que muestra el turno actual
+texto_actual = Label(
+    tablero,
+    text=nombre_jugador1,
+    font=("arial", 20),
+    fg="green",
+    bg="lightgray",
+)
 texto_actual.place(x=500, y=620)
 
+# Iniciar hilo para recibir jugadas del servidor
+threading.Thread(target=recibir_jugadas, daemon=True).start()
+
+# Iniciar bucle principal de la interfaz
 tablero.mainloop()
