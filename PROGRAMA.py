@@ -21,6 +21,7 @@ if not nombre_local:
 PUERTO = 5000
 texto_ganador = None
 
+
 # ================== CONEXIÓN AL SERVIDOR ==================
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
