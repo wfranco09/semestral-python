@@ -6,62 +6,55 @@ import random
 
 # ==================== CONFIGURACIÓN INICIAL ====================
 # Valores por defecto para la conexión
-# ==================== CONFIGURACIÓN INICIAL COOL ====================
 IP_SERVIDOR_DEFECTO = "100.94.222.75"
 PUERTO_DEFECTO = 5000
 texto_ganador = None
 
-config_guardada = {}  # Guardará IP y PUERTO
-
-root_cfg = Tk()
-root_cfg.title("Conexión al Servidor")
-root_cfg.geometry("500x300+400+200")
+# Ventana temporal para los diálogos de configuración
+# ================== Ventana inicial gamer ==================
+root_cfg = tk.Tk()
+root_cfg.title("⚡ Conexión al Servidor ⚡")
+root_cfg.geometry("500x150+500+300")
 root_cfg.resizable(0, 0)
 root_cfg.config(bg="#18324e")
 
+# Animación de título
 neon_colors = ['#FF073A', '#FF8C00', '#FFD300', '#0AFF99', '#00CFFF', '#8A2BE2']
+titulo = tk.Label(root_cfg, text="Conéctate al Servidor", font=("Arial Black", 20), fg="white", bg="#18324e")
+titulo.pack(pady=20)
 
-titulo_cfg = Label(root_cfg, text="⚡ Conéctate al Servidor ⚡",
-                   font=("arial", 25, "bold"), fg="white", bg="#18324e")
-titulo_cfg.place(x=50, y=20)
-
-def animar_titulo_cfg():
+def animar_titulo():
     color = random.choice(neon_colors)
-    titulo_cfg.config(fg=color)
-    root_cfg.after(200, animar_titulo_cfg)
+    titulo.config(fg=color)
+    root_cfg.after(200, animar_titulo)
 
-animar_titulo_cfg()
+animar_titulo()
 
-# Entradas para IP y Puerto
-Label(root_cfg, text="IP del Servidor:", font=("arial", 14), fg="white", bg="#18324e").place(x=50, y=100)
-entry_ip = tk.Entry(root_cfg, font=("arial", 14))
-entry_ip.place(x=250, y=100)
-entry_ip.insert(0, IP_SERVIDOR_DEFECTO)
+# Mostrar la ventana brevemente para animación antes de pedir IP/PUERTO
+root_cfg.update()
+root_cfg.after(500, root_cfg.withdraw)  # Oculta después de medio segundo
 
-Label(root_cfg, text="Puerto:", font=("arial", 14), fg="white", bg="#18324e").place(x=50, y=150)
-entry_puerto = tk.Entry(root_cfg, font=("arial", 14))
-entry_puerto.place(x=250, y=150)
-entry_puerto.insert(0, str(PUERTO_DEFECTO))
+# ================== Pedir IP y Puerto ==================
+ip_input = simpledialog.askstring(
+    "Conexión",
+    "IP del servidor (LAN o Tailscale 100.x.x.x):",
+    initialvalue=IP_SERVIDOR_DEFECTO,
+    parent=root_cfg
+)
+if not ip_input:
+    ip_input = IP_SERVIDOR_DEFECTO
 
-def guardar_config():
-    ip_input = entry_ip.get().strip() or IP_SERVIDOR_DEFECTO
-    try:
-        puerto_input = int(entry_puerto.get().strip())
-    except:
-        puerto_input = PUERTO_DEFECTO
-    config_guardada["IP"] = ip_input
-    config_guardada["PUERTO"] = puerto_input
-    root_cfg.destroy()
+puerto_input = simpledialog.askinteger(
+    "Conexión",
+    "Puerto del servidor:",
+    initialvalue=PUERTO_DEFECTO,
+    parent=root_cfg
+)
+if not puerto_input:
+    puerto_input = PUERTO_DEFECTO
 
-Button(root_cfg, text="Conectar", font=("Arial Black", 12),
-       bg="#00FF00", fg="black", width=12, command=guardar_config).place(x=180, y=220)
-
-root_cfg.mainloop()
-
-# Usar los valores ingresados
-IP_SERVIDOR = config_guardada.get("IP", IP_SERVIDOR_DEFECTO)
-PUERTO = config_guardada.get("PUERTO", PUERTO_DEFECTO)
-
+IP_SERVIDOR = ip_input
+PUERTO = puerto_input
     
 # ==================== CONEXIÓN AL SERVIDOR ====================
 # Crear socket TCP/IP para la conexión
